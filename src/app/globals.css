@@ -1,0 +1,143 @@
+/*
+
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+*/
+
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323:wght@400&display=swap');
+
+/* ─── Swamp Design Tokens ─────────────────────────────────────────────────── */
+:root {
+  --pond-black:   #060a06;
+  --pond-deep:    #0b110b;
+  --pond-mid:     #111a11;
+  --pond-surface: #162016;
+  --pond-rim:     #1e2e1e;
+
+  --text-primary: #c8e6c8;
+  --text-dim:     #5a7a5a;
+  --text-muted:   #3a523a;
+
+  --user-bg:      rgba(255,255,255,0.05);
+  --user-border:  rgba(255,255,255,0.11);
+  --user-text:    #d4e8d4;
+
+  --font-pixel: 'Press Start 2P', monospace;
+  --font-mono:  'VT323', monospace;
+
+  --gutter: clamp(12px, 3vw, 24px);
+}
+
+/* ─── Reset ───────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--pond-black);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--pond-surface); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--pond-rim); }
+
+/* ─── Keyframes ───────────────────────────────────────────────────────────── */
+
+@keyframes bubble-rise {
+  0%   { transform: translateY(0) scale(1);       opacity: 0.55; }
+  40%  { opacity: 0.35; }
+  80%  { transform: translateY(-80vh) scale(1.3); opacity: 0.12; }
+  100% { transform: translateY(-95vh) scale(1.5); opacity: 0;    }
+}
+
+/* Burst bubbles — fired on interruption/switch, play once then vanish */
+@keyframes bubble-burst {
+  0%   { transform: translateY(0)     scale(0.6); opacity: 0.7; }
+  40%  { transform: translateY(-30vh) scale(1.2); opacity: 0.5; }
+  100% { transform: translateY(-75vh) scale(1.6); opacity: 0;   }
+}
+
+/* Easter egg pill flash */
+@keyframes pill-flash {
+  0%   { box-shadow: 0 0 0px transparent; }
+  20%  { box-shadow: 0 0 36px currentColor, 0 0 72px currentColor; }
+  60%  { box-shadow: 0 0 18px currentColor; }
+  100% { box-shadow: 0 0 0px transparent; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.45; }
+  50%       { opacity: 1;    }
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+@keyframes bounce-dot {
+  0%, 80%, 100% { transform: translateY(0);    opacity: 0.4; }
+  40%           { transform: translateY(-6px); opacity: 1;   }
+}
+
+@keyframes msg-in {
+  0%   { opacity: 0; transform: translateY(8px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+
+@keyframes scanlines {
+  0%   { background-position: 0 0; }
+  100% { background-position: 0 4px; }
+}
+
+@keyframes loading-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 1;   }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes coin-pulse {
+  0%, 100% {
+    box-shadow: 0 0 14px rgba(57,255,20,0.2), 0 0 28px rgba(57,255,20,0.08);
+    border-color: rgba(57,255,20,0.35);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(57,255,20,0.45), 0 0 44px rgba(57,255,20,0.18);
+    border-color: rgba(57,255,20,0.7);
+  }
+}
