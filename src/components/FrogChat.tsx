@@ -928,7 +928,7 @@ export default function FrogChat() {
             <div style={s.logoSub}>chaotic mascot ai · on-device · no servers</div>
           </div>
           <a
-            href="https://placeholder-frognal-coin.com"
+            href="https://clanker.world/clanker/0xE7e6C75C662798d1Dfaffa280c62C25ed7a93b07"
             target="_blank"
             rel="noopener noreferrer"
             style={{
