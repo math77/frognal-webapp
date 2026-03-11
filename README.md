@@ -101,7 +101,7 @@ Also because I am currently poor and cannot pay for AI APIs
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/frognal.git
+git clone https://github.com/math77/frognal-webapp.git
 cd frognal
 
 # Install dependencies
