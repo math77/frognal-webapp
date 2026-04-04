@@ -1,122 +1,128 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { buildGemmaPrompt, type ChatMessage } from '@/lib/gemmaPrompt';
-import { type FrogConfig } from '@/lib/frogs';
+/**
+ * useLLM.ts
+ *
+ * Replaces the MediaPipe/WebGPU local inference hook with a thin client
+ * that streams from our /api/generate proxy (Gemini 2.5 Flash).
+ *
+ * The external interface is intentionally kept compatible so FrogChat.tsx
+ * needs only minimal updates:
+ *   - generate()              — multi-turn chat
+ *   - generateOneShot()       — one-shot for interruptions/silence/poke/debate
+ *   - generateImageReaction() — multimodal one-shot for image drops
+ *   - clearHistory()          — reset conversation
+ */
 
+import { useCallback, useRef, useState } from 'react';
+import type { ChatMessage } from '@/lib/gemmaPrompt';
+import type { FrogConfig } from '@/lib/frogs';
+import type { OneShotPrompt, ImagePrompt } from '@/lib/promptTypes';
 
-const MODEL_PATH = '/assets/gemma-3n-E4B-it-int4-Web.litertlm';
-const MEDIAPIPE_WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai@latest/wasm';
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-export type LLMStatus =
-  | 'idle'
-  | 'loading'
-  | 'ready'
-  | 'generating'
-  | 'interrupting'
-  | 'error';
-
-/** A segment of a multimodal prompt — either plain text or an image source. */
-export type PromptSegment = string | { imageSource: string };
+export type LLMStatus = 'ready' | 'generating' | 'interrupting' | 'error';
 
 export interface UseLLMReturn {
   status: LLMStatus;
   statusMessage: string;
   error: string | null;
   history: ChatMessage[];
-  /**
-   * Normal chat generation.
-   * @param contextSuffix  Optional string appended to the system prompt.
-   */
   generate: (
     userMessage: string,
     onToken: (token: string, done: boolean) => void,
     contextSuffix?: string
   ) => Promise<void>;
-  /**
-   * One-shot generation for interruptions, silence, poke.
-   * Takes a pre-built raw Gemma prompt string — no history, no system injection.
-   */
   generateOneShot: (
-    rawPrompt: string,
+    prompt: OneShotPrompt,
     onToken: (token: string, done: boolean) => void
   ) => Promise<void>;
-  /**
-   * Multimodal one-shot: accepts an array of text + image segments.
-   * Used for frog image reactions.
-   */
   generateImageReaction: (
-    promptSegments: PromptSegment[],
+    prompt: ImagePrompt,
     onToken: (token: string, done: boolean) => void
   ) => Promise<void>;
   clearHistory: () => void;
 }
 
+// ─── SSE streaming helper ─────────────────────────────────────────────────────
+
+/**
+ * POSTs `body` to /api/generate and reads the SSE stream,
+ * calling onToken(chunk, false) for each text chunk and onToken('', true) when done.
+ */
+async function streamFromProxy(
+  body: object,
+  onToken: (token: string, done: boolean) => void
+): Promise<void> {
+  const res = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok || !res.body) {
+    const errText = await res.text().catch(() => `HTTP ${res.status}`);
+    throw new Error(errText);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      // Keep the last (possibly incomplete) line in the buffer
+      buffer = lines.pop() ?? '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+
+        if (payload === '[DONE]') {
+          onToken('', true);
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(payload) as { text?: string; error?: string };
+          if (parsed.error) throw new Error(parsed.error);
+          if (parsed.text) onToken(parsed.text, false);
+        } catch (e) {
+          // Skip malformed SSE lines, re-throw real errors
+          if (!(e instanceof SyntaxError)) throw e;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  // Stream ended without [DONE] — still signal completion
+  onToken('', true);
+}
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
 export function useLLM(activeFrog: FrogConfig): UseLLMReturn {
-  const [status, setStatus] = useState<LLMStatus>('idle');
-  const [statusMessage, setStatusMessage] = useState('awaiting the pond...');
+  const [statusState, setStatusState] = useState<LLMStatus>('ready');
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>(activeFrog.seedHistory);
 
-  const llmRef = useRef<any>(null);
-  const initializingRef = useRef(false);
+  // Use a ref so that async callbacks always see the latest status
+  // without needing it as a useCallback dependency (which would cause churn)
+  const statusRef = useRef<LLMStatus>('ready');
 
-  // ── Init ─────────────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const init = async () => {
-      if (initializingRef.current || llmRef.current) return;
-      initializingRef.current = true;
-
-      if (typeof navigator === 'undefined' || !('gpu' in navigator) || !navigator.gpu) {
-        setStatus('error');
-        setError('WebGPU not supported. Use Chrome 113+ or Edge 113+ on desktop.');
-        initializingRef.current = false;
-        return;
-      }
-
-      try {
-        setStatus('loading');
-        setStatusMessage('loading mediapipe from the swamp...');
-        const { FilesetResolver, LlmInference } = await import('@mediapipe/tasks-genai');
-
-        setStatusMessage('resolving wasm fileset...');
-        const genai = await FilesetResolver.forGenAiTasks(MEDIAPIPE_WASM_URL);
-
-        setStatusMessage('loading gemma-3n E4B (15–30s on first load)...');
-        llmRef.current = await LlmInference.createFromOptions(genai, {
-          baseOptions: { modelAssetPath: MODEL_PATH },
-          maxTokens: 2048,
-          topK: 40,
-          temperature: 1.0,
-          randomSeed: Math.floor(Math.random() * 99999),
-          maxNumImages: 1,
-        });
-
-        setStatus('ready');
-        setStatusMessage('frog is awake');
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[useLLM] init error:', err);
-        if (msg.includes('404') || msg.includes('Failed to fetch') || msg.includes('model')) {
-          setError(
-            `Model not found at ${MODEL_PATH}. ` +
-            `Download gemma-3n-E4B-it-int4-Web.litertlm from HuggingFace ` +
-            `and place it in public/assets/. See MODEL_SETUP.md.`
-          );
-        } else {
-          setError(`Init failed: ${msg}`);
-        }
-        setStatus('error');
-      } finally {
-        initializingRef.current = false;
-      }
-    };
-
-    init();
+  const setStatus = useCallback((s: LLMStatus) => {
+    statusRef.current = s;
+    setStatusState(s);
   }, []);
 
-  // ── generate ──────────────────────────────────────────────────────────────────
+  // ── generate ────────────────────────────────────────────────────────────────
 
   const generate = useCallback(
     async (
@@ -124,118 +130,130 @@ export function useLLM(activeFrog: FrogConfig): UseLLMReturn {
       onToken: (token: string, done: boolean) => void,
       contextSuffix?: string
     ): Promise<void> => {
-      if (!llmRef.current || status !== 'ready') return;
-
+      if (statusRef.current !== 'ready') return;
       setStatus('generating');
 
-      // Append pond memory context to system prompt if provided
-      const effectiveSystemPrompt = contextSuffix
+      const systemPrompt = contextSuffix
         ? `${activeFrog.systemPrompt}${contextSuffix}`
         : activeFrog.systemPrompt;
 
-      const currentHistory = history;
-      const prompt = buildGemmaPrompt(effectiveSystemPrompt, currentHistory, userMessage);
+      let fullResponse = '';
+      const trackingOnToken = (token: string, done: boolean) => {
+        fullResponse += token;
+        onToken(token, done);
+      };
 
-      return new Promise<void>((resolve, reject) => {
-        let fullResponse = '';
-        try {
-          llmRef.current.generateResponse(
-            prompt,
-            (partialResult: string, done: boolean) => {
-              fullResponse += partialResult;
-              onToken(partialResult, done);
-              if (done) {
-                setHistory((prev) => [
-                  ...prev,
-                  { role: 'user', content: userMessage },
-                  { role: 'model', content: fullResponse },
-                ]);
-                setStatus('ready');
-                resolve();
-              }
-            }
-          );
-        } catch (err) {
-          console.error('[useLLM] generate error:', err);
-          setStatus('ready');
-          reject(err);
-        }
-      });
+      try {
+        await streamFromProxy(
+          {
+            type: 'chat',
+            systemPrompt,
+            history,
+            userMessage,
+            topK: activeFrog.topK,
+          },
+          trackingOnToken
+        );
+
+        setHistory((prev) => [
+          ...prev,
+          { role: 'user' as const, content: userMessage },
+          { role: 'model' as const, content: fullResponse },
+        ]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+        setStatus('error');
+        onToken('', true);
+        return;
+      }
+
+      setStatus('ready');
     },
-    [activeFrog.systemPrompt, history, status]
+    [activeFrog, history, setStatus]
   );
 
-  // ── generateOneShot ───────────────────────────────────────────────────────────
+  // ── generateOneShot ─────────────────────────────────────────────────────────
 
   const generateOneShot = useCallback(
     async (
-      rawPrompt: string,
+      prompt: OneShotPrompt,
       onToken: (token: string, done: boolean) => void
     ): Promise<void> => {
-      if (!llmRef.current || status !== 'ready') return;
-
+      if (statusRef.current !== 'ready') return;
       setStatus('interrupting');
 
-      return new Promise<void>((resolve, reject) => {
-        try {
-          llmRef.current.generateResponse(
-            rawPrompt,
-            (partialResult: string, done: boolean) => {
-              onToken(partialResult, done);
-              if (done) {
-                setStatus('ready');
-                resolve();
-              }
-            }
-          );
-        } catch (err) {
-          console.error('[useLLM] generateOneShot error:', err);
-          setStatus('ready');
-          reject(err);
-        }
-      });
+      try {
+        await streamFromProxy(
+          {
+            type: 'oneshot',
+            systemPrompt: prompt.systemPrompt,
+            userContext: prompt.userContext,
+          },
+          onToken
+        );
+      } catch {
+        // Silent fail for side-channel generations; signal done so typing buffer
+        // drains and the UI unblocks
+        onToken('', true);
+      } finally {
+        setStatus('ready');
+      }
     },
-    [status]
+    [setStatus]
   );
 
-  // ── generateImageReaction ─────────────────────────────────────────────────────
+  // ── generateImageReaction ───────────────────────────────────────────────────
 
   const generateImageReaction = useCallback(
     async (
-      promptSegments: PromptSegment[],
+      prompt: ImagePrompt,
       onToken: (token: string, done: boolean) => void
     ): Promise<void> => {
-      if (!llmRef.current || status !== 'ready') return;
-
+      if (statusRef.current !== 'ready') return;
       setStatus('interrupting');
 
-      return new Promise<void>((resolve, reject) => {
-        try {
-          llmRef.current.generateResponse(
-            promptSegments,
-            (partialResult: string, done: boolean) => {
-              onToken(partialResult, done);
-              if (done) {
-                setStatus('ready');
-                resolve();
-              }
-            }
-          );
-        } catch (err) {
-          console.error('[useLLM] generateImageReaction error:', err);
-          setStatus('ready');
-          reject(err);
-        }
-      });
+      try {
+        await streamFromProxy(
+          {
+            type: 'image',
+            systemPrompt: prompt.systemPrompt,
+            userContext: prompt.userContext,
+            imageDataUrl: prompt.imageDataUrl,
+          },
+          onToken
+        );
+      } catch {
+        onToken('', true);
+      } finally {
+        setStatus('ready');
+      }
     },
-    [status]
+    [setStatus]
   );
 
-  // ── clearHistory ──────────────────────────────────────────────────────────────
+  // ── clearHistory ────────────────────────────────────────────────────────────
 
   const clearHistory = useCallback(() => {
     setHistory(activeFrog.seedHistory);
   }, [activeFrog.seedHistory]);
 
-  return { status, statusMessage, error, history, generate, generateOneShot, generateImageReaction, clearHistory };
+  // ── Return ──────────────────────────────────────────────────────────────────
+
+  const statusMessage =
+    statusState === 'generating'   ? 'generating...'      :
+    statusState === 'interrupting' ? 'something stirs...' :
+    statusState === 'error'        ? 'pond error'         :
+    'ready';
+
+  return {
+    status: statusState,
+    statusMessage,
+    error,
+    history,
+    generate,
+    generateOneShot,
+    generateImageReaction,
+    clearHistory,
+  };
 }

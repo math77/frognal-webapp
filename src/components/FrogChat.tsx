@@ -21,6 +21,7 @@ import { createTypingBuffer } from '@/lib/typingBuffer';
 import { sounds } from '@/lib/soundEngine';
 import { ambient } from '@/lib/ambientEngine';
 import { useLLM } from '@/hooks/useLLM';
+import type { OneShotPrompt } from '@/lib/promptTypes';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,7 +36,6 @@ interface DisplayMessage {
   content: string;
   frogId?: FrogId;
   isStreaming?: boolean;
-  /** Data URL for image_drop messages */
   imageDataUrl?: string;
 }
 
@@ -43,10 +43,6 @@ interface DisplayMessage {
 
 const MAX_IMAGE_SIZE = 512;
 
-/**
- * Resizes an image file to max 512×512 (maintaining aspect ratio)
- * and returns a JPEG data URL.
- */
 function resizeImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -54,14 +50,12 @@ function resizeImage(file: File): Promise<string> {
 
     img.onload = () => {
       URL.revokeObjectURL(objectUrl);
-
       let { width, height } = img;
       if (width > MAX_IMAGE_SIZE || height > MAX_IMAGE_SIZE) {
         const ratio = Math.min(MAX_IMAGE_SIZE / width, MAX_IMAGE_SIZE / height);
         width  = Math.round(width  * ratio);
         height = Math.round(height * ratio);
       }
-
       const canvas = document.createElement('canvas');
       canvas.width  = width;
       canvas.height = height;
@@ -103,20 +97,6 @@ function BubbleBackground({ frog, burst }: { frog: FrogConfig; burst: boolean })
       {burst && BURST_CONFIGS.map((b) => (
         <div key={`burst-${b.id}`} style={{ position: 'absolute', bottom: -20, left: `${b.left}%`, width: b.size, height: b.size, borderRadius: '50%', background: frog.vibe.bubbleGradient, border: `1px solid ${frog.vibe.bubbleBorder}`, animation: `bubble-burst 1.2s ease-out ${b.delay}s forwards`, pointerEvents: 'none' }} />
       ))}
-    </div>
-  );
-}
-
-function LoadingScreen({ message }: { message: string }) {
-  return (
-    <div style={s.loadingScreen}>
-      <div style={s.loadingContent}>
-        <img src="/assets/frog.jpeg" alt="Frognal" style={{ width: 96, height: 96, borderRadius: '50%', objectFit: 'cover', objectPosition: 'center top', animation: 'loading-pulse 2s ease-in-out infinite', boxShadow: '0 0 24px rgba(57,255,20,0.25)' }} />
-        <div style={s.loadingTitle}>FROG<span style={{ color: '#39ff14' }}>NAL</span></div>
-        <div style={s.loadingSpinner} />
-        <div style={s.loadingMessage}>{message}</div>
-        <div style={s.loadingHint}>webgpu · gemma-3n e4b · on-device · no servers</div>
-      </div>
     </div>
   );
 }
@@ -227,7 +207,6 @@ function MessageBubble({ msg, onPoke, isBlocked, userName }: { msg: DisplayMessa
   }
 
   if (msg.role === 'image_drop') {
-    const avatarLabel = userName ? userName[0].toUpperCase() : 'U';
     return (
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, alignItems: 'flex-start', animation: 'msg-in 0.25s ease-out' }}>
         <div style={{ maxWidth: '68%', padding: 6, borderRadius: '12px 12px 2px 12px', background: 'var(--user-bg)', border: '1px solid var(--user-border)' }}>
@@ -370,7 +349,6 @@ export default function FrogChat() {
   const [flashFrogId, setFlashFrogId] = useState<FrogId | null>(null);
   const [burstActive, setBurstActive] = useState(false);
 
-  // Username — persisted in localStorage, shown in modal on first load
   const [userName, setUserName] = useState<string>(() => {
     if (typeof window !== 'undefined') return localStorage.getItem('frognal_username') ?? '';
     return '';
@@ -387,7 +365,7 @@ export default function FrogChat() {
   const spontaneousDebateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pondMemoryRef = useRef<PondMemory>(createPondMemory());
   const activeFrog = FROGS[activeFrogId];
-  const { status, statusMessage, error, generate, generateOneShot, generateImageReaction, clearHistory } = useLLM(activeFrog);
+  const { status, error, generate, generateOneShot, generateImageReaction, clearHistory } = useLLM(activeFrog);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -399,11 +377,10 @@ export default function FrogChat() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [displayMessages]);
 
+  // Show the initial splash immediately on mount (no model loading needed)
   useEffect(() => {
-    if (status === 'ready' && displayMessages.length === 0) {
-      setDisplayMessages([{ id: 'splash-init', role: 'splash', content: activeFrog.splashLine, frogId: activeFrogId }]);
-    }
-  }, [status]); // eslint-disable-line
+    setDisplayMessages([{ id: 'splash-init', role: 'splash', content: activeFrog.splashLine, frogId: activeFrogId }]);
+  }, []); // eslint-disable-line
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -432,7 +409,7 @@ export default function FrogChat() {
       const silenceFrogId = pickSilenceFrog(unlockedFrogs);
       const silenceFrog = FROGS[silenceFrogId];
       const memCtx = buildInterruptionContext(pondMemoryRef.current, silenceFrogId, userName || undefined);
-      const rawPrompt = buildSilencePrompt(silenceFrog, memCtx);
+      const prompt = buildSilencePrompt(silenceFrog, memCtx);
       const msgId = `silence-${silenceFrogId}-${Date.now()}`;
 
       sounds.silence();
@@ -443,7 +420,7 @@ export default function FrogChat() {
       const { queue, finished } = createTypingBuffer(silenceFrog.typingProfile, (chunk) => {
         setDisplayMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, content: m.content + chunk } : m));
       });
-      await generateOneShot(rawPrompt, queue);
+      await generateOneShot(prompt, queue);
       await finished;
       setDisplayMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, isStreaming: false } : m));
       resetSilenceTimer();
@@ -457,14 +434,14 @@ export default function FrogChat() {
 
   // ── Stream one-shot ───────────────────────────────────────────────────────────
 
-  const streamOneShot = useCallback(async (msgId: string, rawPrompt: string, frogId: FrogId): Promise<string> => {
+  const streamOneShot = useCallback(async (msgId: string, prompt: OneShotPrompt, frogId: FrogId): Promise<string> => {
     const frog = FROGS[frogId];
     let fullText = '';
     const { queue, finished } = createTypingBuffer(frog.typingProfile, (chunk) => {
       fullText += chunk;
       setDisplayMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, content: m.content + chunk } : m));
     });
-    await generateOneShot(rawPrompt, queue);
+    await generateOneShot(prompt, queue);
     await finished;
     setDisplayMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, isStreaming: false } : m));
     return fullText;
@@ -474,16 +451,9 @@ export default function FrogChat() {
 
   const resetSpontaneousDebateTimer = useCallback(() => {
     if (spontaneousDebateTimerRef.current) clearTimeout(spontaneousDebateTimerRef.current);
-    // Fire between 3 and 5 minutes of inactivity (randomised each reset)
-    //const delay = (180 + Math.random() * 120) * 1000;
-    
-    //const delay = (20 + Math.random() * 10) * 1000; // 20–30 seconds for testing
-    
-    //1.5 and 3 minutes
     const delay = (90 + Math.random() * 90) * 1000;
     spontaneousDebateTimerRef.current = setTimeout(async () => {
       if (status !== 'ready') return;
-      // Pick frogs based on current theme for maximum relevance
       const [frogAId, frogBId] = pickDebateFrogs(pondMemoryRef.current.theme, unlockedFrogs);
       const frogA = FROGS[frogAId];
       const frogB = FROGS[frogBId];
@@ -568,10 +538,10 @@ export default function FrogChat() {
     applyMoodShift(msg.frogId, 'was_poked');
     const frog = FROGS[msg.frogId];
     const memCtx = buildInterruptionContext(pondMemoryRef.current, msg.frogId, userName || undefined);
-    const rawPrompt = buildPokePrompt(frog, msg.content, memCtx);
+    const prompt = buildPokePrompt(frog, msg.content, memCtx);
     const msgId = `poke-${msg.frogId}-${Date.now()}`;
     setDisplayMessages((prev) => [...prev, { id: msgId, role: 'poke', content: '', frogId: msg.frogId, isStreaming: true }]);
-    await streamOneShot(msgId, rawPrompt, msg.frogId);
+    await streamOneShot(msgId, prompt, msg.frogId);
   }, [isBlocked, resetSilenceTimer, streamOneShot, applyMoodShift]);
 
   // ── Interruption orchestrator ────────────────────────────────────────────────
@@ -596,10 +566,10 @@ export default function FrogChat() {
       const frog = FROGS[frogId];
       const activeFrogName = FROGS[currentActiveFrogId].name;
       const memCtx = buildInterruptionContext(pondMemoryRef.current, frogId, userName || undefined);
-      const rawPrompt = buildInterruptionPrompt(frog, lastUserMsg, activeFrogName, lastFrogMsg, plan.isEasterEgg, memCtx);
+      const prompt = buildInterruptionPrompt(frog, lastUserMsg, activeFrogName, lastFrogMsg, plan.isEasterEgg, memCtx);
       const msgId = `interruption-${frogId}-${Date.now()}`;
       setDisplayMessages((prev) => [...prev, { id: msgId, role: 'interruption', content: '', frogId, isStreaming: true }]);
-      lastInterruptorResponse = await streamOneShot(msgId, rawPrompt, frogId);
+      lastInterruptorResponse = await streamOneShot(msgId, prompt, frogId);
       lastInterruptorId = frogId;
       if (interruptorIds.length > 1) { await new Promise((r) => setTimeout(r, 350)); sounds.pop(); }
     }
@@ -607,16 +577,16 @@ export default function FrogChat() {
     recordDisagreement(pondMemoryRef.current, lastInterruptorId, lastInterruptorResponse, currentActiveFrogId, lastFrogMsg);
 
     if (shouldFireLastWord()) {
-      const activeFrog = FROGS[currentActiveFrogId];
+      const activeFrogObj = FROGS[currentActiveFrogId];
       const memCtx = buildInterruptionContext(pondMemoryRef.current, currentActiveFrogId, userName || undefined);
-      const lastWordPrompt = buildLastWordPrompt(activeFrog, FROGS[lastInterruptorId].name, lastInterruptorResponse, memCtx);
+      const lastWordPrompt = buildLastWordPrompt(activeFrogObj, FROGS[lastInterruptorId].name, lastInterruptorResponse, memCtx);
       const lastWordMsgId = `lastword-${currentActiveFrogId}-${Date.now()}`;
       setDisplayMessages((prev) => [...prev, { id: lastWordMsgId, role: 'lastword', content: '', frogId: currentActiveFrogId, isStreaming: true }]);
       await streamOneShot(lastWordMsgId, lastWordPrompt, currentActiveFrogId);
     }
   }, [streamOneShot, applyMoodShift, triggerBurst, triggerFlash, unlockedFrogs, userName]);
 
-  // ── Agreement check (runs independently after runInterruptions) ───────────────
+  // ── Agreement check ───────────────────────────────────────────────────────────
 
   const runAgreement = useCallback(async (
     currentActiveFrogId: FrogId,
@@ -629,17 +599,17 @@ export default function FrogChat() {
     const agreeingFrog = FROGS[agreeingFrogId];
     const activeFrogName = FROGS[currentActiveFrogId].name;
     const memCtx = buildInterruptionContext(pondMemoryRef.current, agreeingFrogId, userName || undefined);
-    const rawPrompt = buildAgreementPrompt(agreeingFrog, activeFrogName, lastFrogMsg, memCtx);
+    const prompt = buildAgreementPrompt(agreeingFrog, activeFrogName, lastFrogMsg, memCtx);
     const msgId = `agreement-${agreeingFrogId}-${Date.now()}`;
 
-    await new Promise((r) => setTimeout(r, 400)); // small beat so it doesn't overlap
+    await new Promise((r) => setTimeout(r, 400));
     sounds.pop();
     applyMoodShift(agreeingFrogId, 'did_interrupt');
 
     setDisplayMessages((prev) => [...prev, {
       id: msgId, role: 'agreement', content: '', frogId: agreeingFrogId, isStreaming: true,
     }]);
-    await streamOneShot(msgId, rawPrompt, agreeingFrogId);
+    await streamOneShot(msgId, prompt, agreeingFrogId);
   }, [streamOneShot, applyMoodShift, unlockedFrogs, userName]);
 
   // ── Debate mode ───────────────────────────────────────────────────────────────
@@ -660,7 +630,6 @@ export default function FrogChat() {
     let lastBResponse = '';
 
     for (let round = 1; round <= DEBATE_ROUNDS; round++) {
-      // Frog A turn
       const memCtxA = buildInterruptionContext(pondMemoryRef.current, frogAId, userName || undefined);
       const promptA = round === 1
         ? buildDebateOpeningPrompt(frogA, topic, frogB.name, memCtxA)
@@ -671,7 +640,6 @@ export default function FrogChat() {
 
       await new Promise((r) => setTimeout(r, 280));
 
-      // Frog B turn
       const memCtxB = buildInterruptionContext(pondMemoryRef.current, frogBId, userName || undefined);
       const promptB = buildDebateResponsePrompt(frogB, topic, frogA.name, lastAResponse, round, memCtxB);
       const msgBId = `debate-${frogBId}-r${round}-${Date.now()}`;
@@ -718,7 +686,6 @@ export default function FrogChat() {
       return;
     }
 
-    // Show image in chat
     setDisplayMessages((prev) => [...prev, {
       id: `image-drop-${Date.now()}`, role: 'image_drop',
       content: '', imageDataUrl: dataUrl,
@@ -727,13 +694,12 @@ export default function FrogChat() {
     sounds.switchFrog();
     triggerBurst();
 
-    // All visible frogs react sequentially
     const frogsToReact: FrogId[] = [...BASE_FROG_ORDER, ...(sincerityUnlocked ? ['sincerity' as FrogId] : [])];
 
     for (const frogId of frogsToReact) {
       const frog = FROGS[frogId];
       const memCtx = buildInterruptionContext(pondMemoryRef.current, frogId, userName || undefined);
-      const promptSegments = buildImageReactionPrompt(frog, dataUrl, memCtx);
+      const prompt = buildImageReactionPrompt(frog, dataUrl, memCtx);
       const msgId = `image-reaction-${frogId}-${Date.now()}`;
 
       setDisplayMessages((prev) => [...prev, {
@@ -746,14 +712,13 @@ export default function FrogChat() {
         );
       });
 
-      await generateImageReaction(promptSegments, queue);
+      await generateImageReaction(prompt, queue);
       await finished;
 
       setDisplayMessages((prev) =>
         prev.map((m) => m.id === msgId ? { ...m, isStreaming: false } : m)
       );
 
-      // Small beat between frogs
       await new Promise((r) => setTimeout(r, 220));
     }
   }, [isBlocked, resetSilenceTimer, triggerBurst, generateImageReaction, sincerityUnlocked]);
@@ -780,7 +745,6 @@ export default function FrogChat() {
     setInputValue('');
     resetSilenceTimer();
 
-    // ── Debate command intercept ──
     const debateTopic = checkDebateCommand(text);
     if (debateTopic) {
       setDisplayMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }]);
@@ -788,13 +752,10 @@ export default function FrogChat() {
       return;
     }
 
-    // ── Check sincerity unlock ──
     if (checkSincerityUnlock(text, totalExchangesRef.current, sincerityUnlocked)) {
-      // Show unlock BEFORE normal reply
       triggerSincerityUnlock();
     }
 
-    // ── Normal flow ──
     setDisplayMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: 'user', content: text }]);
 
     const frogMsgId = `frog-${activeFrogId}-${Date.now()}`;
@@ -820,7 +781,6 @@ export default function FrogChat() {
       streakCountRef.current += 1;
       setStreakCount(streakCountRef.current);
 
-      // Check rare event
       const rareEvent = checkRareEvent(activeFrogId, pondMemoryRef.current);
       if (rareEvent) {
         await new Promise((r) => setTimeout(r, 600));
@@ -834,7 +794,7 @@ export default function FrogChat() {
       console.error('[FrogChat] error:', err);
       setDisplayMessages((prev) => prev.map((m) => m.id === frogMsgId ? { ...m, content: '...the frog glitched. the pond is broken.', isStreaming: false } : m));
     }
-  }, [inputValue, status, activeFrogId, activeFrog, generate, runInterruptions, runAgreement, resetSilenceTimer, resetSpontaneousDebateTimer, runDebate, sincerityUnlocked, triggerSincerityUnlock, unlockedFrogs]);
+  }, [inputValue, status, activeFrogId, activeFrog, generate, runInterruptions, runAgreement, resetSilenceTimer, runDebate, sincerityUnlocked, triggerSincerityUnlock]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
@@ -843,7 +803,6 @@ export default function FrogChat() {
   // ── Render guards ──────────────────────────────────────────────────────────────
 
   if (status === 'error' && error) return <ErrorScreen error={error} />;
-  if (status === 'loading' || status === 'idle') return <LoadingScreen message={statusMessage} />;
 
   const statusLabel = status === 'generating' ? `${activeFrog.name} is typing...` : status === 'interrupting' ? 'something stirs in the pond...' : 'ready';
 
@@ -852,13 +811,11 @@ export default function FrogChat() {
   return (
     <div style={s.root} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
 
-      {/* Hidden file input */}
       <input
         ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageFile(f); e.target.value = ''; }}
       />
 
-      {/* Drag overlay */}
       {isDragging && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `rgba(0,0,0,0.72)`, border: `2px dashed ${activeFrog.color}`, pointerEvents: 'none' }}>
           <div style={{ textAlign: 'center' }}>
@@ -875,7 +832,6 @@ export default function FrogChat() {
 
       <BubbleBackground frog={activeFrog} burst={burstActive} />
 
-      {/* Username modal */}
       {showNameModal && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.85)' }}>
           <div style={{ background: 'var(--pond-deep)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '32px 28px', width: 320, display: 'flex', flexDirection: 'column', gap: 18, boxShadow: '0 0 40px rgba(57,255,20,0.08)' }}>
@@ -925,7 +881,7 @@ export default function FrogChat() {
         <header style={s.header}>
           <div>
             <h1 style={s.logo}>FROG<span style={{ color: activeFrog.color, transition: 'color 0.4s ease' }}>NAL</span></h1>
-            <div style={s.logoSub}>chaotic mascot ai · on-device · no servers</div>
+            <div style={s.logoSub}>chaotic mascot ai · gemini 2.5 flash · cloud</div>
           </div>
           <a
             href="https://clanker.world/clanker/0xE7e6C75C662798d1Dfaffa280c62C25ed7a93b07"
@@ -979,7 +935,6 @@ export default function FrogChat() {
             );
           })}
 
-          {/* Mysterious locked pill — before sincerity is unlocked */}
           {!sincerityUnlocked && (
             <div title="???" style={{ ...s.frogPill, background: 'rgba(255,255,255,0.01)', border: '1px dashed rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.1)', cursor: 'default', userSelect: 'none', fontFamily: 'var(--font-mono)', fontSize: 14, letterSpacing: '0.1em' }}>
               • • •
@@ -991,7 +946,6 @@ export default function FrogChat() {
         <div style={s.pond}>
           <div style={s.messagesInner}>
             {displayMessages.map((msg) => {
-              // Render unlock banner specially
               if (msg.role === 'splash' && msg.frogId === 'sincerity' && msg.content === '' && sincerityUnlocked) {
                 return <UnlockBanner key={msg.id} frog={FROGS['sincerity']} />;
               }
@@ -1013,7 +967,6 @@ export default function FrogChat() {
         {/* Input */}
         <div style={s.inputBar}>
           <div style={{ ...s.inputWrapper, borderColor: inputValue ? activeFrog.borderColor : isDragging ? activeFrog.borderColor : 'rgba(255,255,255,0.09)', boxShadow: inputValue ? `0 0 14px ${activeFrog.glowColor.replace('0.45', '0.12')}` : 'none' }}>
-            {/* Image upload button */}
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isBlocked}
@@ -1072,7 +1025,4 @@ const s: Record<string, CSSProperties> = {
   loadingScreen: { position: 'fixed', inset: 0, background: 'var(--pond-black)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 },
   loadingContent: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: 32 },
   loadingTitle: { fontFamily: 'var(--font-pixel)', fontSize: 'clamp(16px, 4vw, 28px)', color: 'var(--text-primary)', letterSpacing: '0.1em' },
-  loadingSpinner: { width: 28, height: 28, border: '2px solid rgba(57,255,20,0.15)', borderTop: '2px solid #39ff14', borderRadius: '50%', animation: 'spin-slow 0.9s linear infinite' },
-  loadingMessage: { fontFamily: 'var(--font-mono)', fontSize: 18, color: 'var(--text-dim)', textAlign: 'center', maxWidth: 400, animation: 'loading-pulse 1.5s ease-in-out infinite' },
-  loadingHint: { fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-muted)', letterSpacing: '0.07em', textTransform: 'uppercase' },
 };

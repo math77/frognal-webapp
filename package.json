@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "bun --bun next dev", 
-    "build": "bun --bun next build", 
+    "dev": "bun --bun next dev",
+    "build": "bun --bun next build",
     "start": "bun --bun next start"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@mediapipe/tasks-genai": "^0.10.26",
     "next": "16.1.6",
     "react": "19.2.3",
