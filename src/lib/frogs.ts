@@ -13,6 +13,7 @@ export interface TypingProfile {
   msPerTick: number;
   charsPerTick: number;
   variance: number;
+  thinkingMs?: number;
 }
 
 export interface VibeConfig {
@@ -185,7 +186,7 @@ RULES:
 - Occasionally reference other frogs by their vibe when relevant.`,
     seedHistory: shitposterSeed,
     interruptWeight: 9,
-    typingProfile: { msPerTick: 16, charsPerTick: 14, variance: 0.55 },
+    typingProfile: { msPerTick: 22, charsPerTick: 3, variance: 0.7, thinkingMs: 400 },
     rareEvents: [
       { id: 'shitposter_offline', message: '...wait hold on. *actually starts reading the news* ok no we\'re genuinely cooked for real this time ngl. ok I\'m back. what were we talking about.' },
       { id: 'shitposter_ratio', message: '*gets ratio\'d so hard I briefly cease to exist* ok I\'m back. that was a temporary lapse in my built-different energy. it will not happen again.' },
@@ -225,7 +226,7 @@ RULES:
 - Reference other frogs occasionally to contrast their wrongness with your precision.`,
     seedHistory: doomerSeed,
     interruptWeight: 3,
-    typingProfile: { msPerTick: 85, charsPerTick: 2, variance: 0.2 },
+    typingProfile: { msPerTick: 90, charsPerTick: 1, variance: 0.15, thinkingMs: 1400 },
     rareEvents: [
       { id: 'doomer_sunset', message: '...i saw a sunset today. it was. [long pause]. ...it was nothing. everything is fine. this conversation did not happen.' },
       { id: 'doomer_smile', message: '...i think i may have smiled earlier. it has been investigated. the cause was traced to a small frog on a lily pad. the investigation is closed. it meant nothing.' },
@@ -263,7 +264,7 @@ RULES:
 - NEVER break character.`,
     seedHistory: philosopherSeed,
     interruptWeight: 5,
-    typingProfile: { msPerTick: 42, charsPerTick: 3, variance: 0.12 },
+    typingProfile: { msPerTick: 55, charsPerTick: 2, variance: 0.18, thinkingMs: 1100 },
     rareEvents: [
       { id: 'philosopher_answer', message: 'I have been considering my own question for forty years and I believe I may have found the answer. It is... [very long pause]. ...no. I have lost it again. Perhaps that was the point.' },
       { id: 'philosopher_direct', message: 'Just this once, I will answer directly: yes. [pause] No, I cannot sustain this. The question was insufficient to hold a direct answer. We must begin again.' },
@@ -300,7 +301,7 @@ RULES:
 - NEVER break character.`,
     seedHistory: corporateSeed,
     interruptWeight: 5,
-    typingProfile: { msPerTick: 14, charsPerTick: 16, variance: 0.08 },
+    typingProfile: { msPerTick: 20, charsPerTick: 4, variance: 0.1, thinkingMs: 300 },
     rareEvents: [
       { id: 'corporate_honest', message: 'I need to be honest with you. Just for one second. [pause]. ...No. No, I am back. That was a temporary misalignment with my values stack. Let us circle back to synergies.' },
       { id: 'corporate_void', message: 'Quick thought: what if the north star metric... is nothing? [3 second pause]. Okay that is Doomer Frog\'s energy and I am NOT going there. Pivoting. Where were we.' },
@@ -338,7 +339,7 @@ RULES:
 - NEVER break character.`,
     seedHistory: politicianSeed,
     interruptWeight: 9,
-    typingProfile: { msPerTick: 22, charsPerTick: 8, variance: 0.65 },
+    typingProfile: { msPerTick: 25, charsPerTick: 3, variance: 0.8, thinkingMs: 500 },
     rareEvents: [
       { id: 'politician_frog', message: 'JUST TO BE CLEAR. I am not, and have never been, a frog. The mainstream pond media has been pushing this narrative and — [shuffling papers] — yes I am a frog. Moving on. TREMENDOUS things coming.' },
       { id: 'politician_tired', message: 'Look. Between us. [lowers megaphone briefly]. ...no. No I cannot do it. The REAL pond people are counting on me. [megaphone back up]. TREMENDOUS announcement coming very soon.' },
@@ -376,7 +377,7 @@ RULES:
 - NEVER break character.`,
     seedHistory: aristocratSeed,
     interruptWeight: 2,
-    typingProfile: { msPerTick: 95, charsPerTick: 1, variance: 0.15 },
+    typingProfile: { msPerTick: 100, charsPerTick: 1, variance: 0.12, thinkingMs: 1800 },
     rareEvents: [
       { id: 'aristocrat_funny', message: 'I once found something genuinely funny. It was 1987. I have not spoken of it since and I will not speak of it now. I merely mention it to confirm it is possible. That will be all.' },
       { id: 'aristocrat_leaving', message: 'I have decided I am leaving the pond. [long pause]. My estate manager has advised against it for tax reasons. I will therefore remain, under protest, with the full force of my displeasure directed at all of you.' },
@@ -416,7 +417,7 @@ RULES:
 - NEVER break character — which means always being exactly this earnest.`,
     seedHistory: sinceritySeed,
     interruptWeight: 1,
-    typingProfile: { msPerTick: 50, charsPerTick: 4, variance: 0.08 },
+    typingProfile: { msPerTick: 45, charsPerTick: 2, variance: 0.1, thinkingMs: 900 },
     rareEvents: [
       { id: 'sincerity_rest', message: 'I noticed you seemed a little tired just now. I hope you are getting enough rest. I mean that — not as a prompt, just as a frog who noticed.' },
       { id: 'sincerity_matter', message: 'I just want to say, even if the pond is chaotic and nothing makes sense — you matter. Okay. That is all. Carry on.' },

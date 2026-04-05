@@ -18,10 +18,16 @@ import {
   MOOD_EMOJI, type PondMemory, type Mood,
 } from '@/lib/pondMemory';
 import { createTypingBuffer } from '@/lib/typingBuffer';
+import { requestBudget } from '@/lib/requestQueue';
 import { sounds } from '@/lib/soundEngine';
 import { ambient } from '@/lib/ambientEngine';
 import { useLLM } from '@/hooks/useLLM';
 import type { OneShotPrompt } from '@/lib/promptTypes';
+
+import { useWallet } from '@/hooks/useWallet';
+import { buildCustomFrogConfig } from '@/lib/customFrog';
+import { FEATURES } from '@/lib/featureFlags';
+import { CustomFrogCreator } from '@/components/CustomFrogCreator';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -364,16 +370,55 @@ export default function FrogChat() {
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const spontaneousDebateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pondMemoryRef = useRef<PondMemory>(createPondMemory());
-  const activeFrog = FROGS[activeFrogId];
-  const { status, error, generate, generateOneShot, generateImageReaction, clearHistory } = useLLM(activeFrog);
+  //const activeFrog = FROGS[activeFrogId];
+  
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const isBlocked = status === 'generating' || status === 'interrupting';
+  
   const [isDragging, setIsDragging] = useState(false);
+  const [customFrog,  setCustomFrog]  = useState<FrogConfig | null>(null);
+  const [showForge,   setShowForge]   = useState(false);
+  const [creatorFrogs, setCreatorFrogs] = useState<FrogConfig[]>([]);
+
+  const wallet = useWallet();
+
+  // Merged frog registry — base frogs + any loaded custom frog
+  /*
+  const allFrogs: Record<string, FrogConfig> = {
+    ...FROGS,
+    ...(customFrog ? { [customFrog.id]: customFrog } : {}),
+  };
+  */
+
+  const allFrogs: Record<string, FrogConfig> = {
+    ...FROGS,
+    ...(customFrog ? { [customFrog.id]: customFrog } : {}),
+    ...Object.fromEntries(creatorFrogs.map(f => [f.id, f])),
+  };
+
+  const activeFrog = allFrogs[activeFrogId] ?? FROGS['shitposter'];
+  const { status, error, generate, generateOneShot, generateImageReaction, clearHistory } = useLLM(activeFrog);
+  const isBlocked = status === 'generating' || status === 'interrupting';
+
 
   const unlockedFrogs: FrogId[] = sincerityUnlocked ? ['sincerity'] : [];
-  const displayFrogOrder: FrogId[] = [...BASE_FROG_ORDER, ...(sincerityUnlocked ? ['sincerity' as FrogId] : [])];
+
+  /*
+  const displayFrogOrder: FrogId[] = [
+    ...BASE_FROG_ORDER,
+    ...(sincerityUnlocked ? ['sincerity' as FrogId] : []),
+    ...(customFrog ? [customFrog.id as FrogId] : []),
+  ];
+  */
+
+  const displayFrogOrder: FrogId[] = [
+    ...BASE_FROG_ORDER,
+    ...(sincerityUnlocked ? ['sincerity' as FrogId] : []),
+    ...(customFrog ? [customFrog.id as FrogId] : []),
+    ...creatorFrogs.map(f => f.id as FrogId),
+  ];
+
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [displayMessages]);
 
@@ -381,6 +426,39 @@ export default function FrogChat() {
   useEffect(() => {
     setDisplayMessages([{ id: 'splash-init', role: 'splash', content: activeFrog.splashLine, frogId: activeFrogId }]);
   }, []); // eslint-disable-line
+
+  useEffect(() => {
+    if (!FEATURES.CUSTOM_FROG_CREATOR) return;
+    const params = new URLSearchParams(window.location.search);
+    const frogId = params.get('frog');
+    if (!frogId) return;
+    fetch(`/api/frogs?id=${encodeURIComponent(frogId)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.frog) {
+          const cfg = data.frog as FrogConfig;
+          setCustomFrog(cfg);
+          setActiveFrogId(cfg.id as FrogId);
+          clearHistory();
+          setDisplayMessages(prev => [...prev, {
+            id: `splash-shared-${Date.now()}`, role: 'splash' as const,
+            content: `✦ shared frog · ${cfg.splashLine}`, frogId: cfg.id as FrogId,
+          }]);
+        }
+      })
+     .catch(console.error);
+  }, []); // eslint-disable-line
+
+  // Load all frogs created by the connected wallet
+  useEffect(() => {
+    if (!wallet.address || !FEATURES.CUSTOM_FROG_CREATOR) return;
+    fetch(`/api/frogs?address=${encodeURIComponent(wallet.address.toLowerCase())}`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data.frogs)) setCreatorFrogs(data.frogs);
+      })
+      .catch(console.error);
+  }, [wallet.address]);
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -787,8 +865,19 @@ export default function FrogChat() {
         setDisplayMessages((prev) => [...prev, { id: `rare-${activeFrogId}-${Date.now()}`, role: 'rare_event', content: rareEvent.message, frogId: activeFrogId }]);
       }
 
-      await runInterruptions(activeFrogId, text, fullFrogResponse);
-      await runAgreement(activeFrogId, fullFrogResponse);
+      //await runInterruptions(activeFrogId, text, fullFrogResponse);
+      //await runAgreement(activeFrogId, fullFrogResponse);
+
+      // Soft limit: reduce interruption chance by skipping if budget is tight
+      if (!requestBudget.isExhausted) {
+        // At soft limit, only run interruptions 50% of the time
+        const skip = requestBudget.isTight && Math.random() < 0.5;
+        if (!skip) await runInterruptions(activeFrogId, text, fullFrogResponse);
+      }
+      
+      if (!requestBudget.isTight) {
+        await runAgreement(activeFrogId, fullFrogResponse);
+      }
 
     } catch (err) {
       console.error('[FrogChat] error:', err);
@@ -872,6 +961,24 @@ export default function FrogChat() {
           </div>
         </div>
       )}
+
+      {showForge && wallet.isEligible && wallet.address && (
+        <CustomFrogCreator
+          creatorAddress={wallet.address}
+          onFrogCreated={(frog, shareUrl) => {
+            setCustomFrog(frog);
+            setShowForge(false);
+            setActiveFrogId(frog.id as FrogId);
+            clearHistory();
+            setDisplayMessages(prev => [...prev, {
+              id: `splash-custom-${Date.now()}`, role: 'splash' as const,
+              content: `✦ ${frog.name} enters the pond.`, frogId: frog.id as FrogId,
+            }]);
+          }}
+          onClose={() => setShowForge(false)}
+        />
+      )}
+
       <div aria-hidden="true" style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 1, backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.22) 3px, rgba(0,0,0,0.22) 4px)', backgroundSize: '100% 4px', animation: 'scanlines 0.5s steps(1) infinite', mixBlendMode: 'multiply', opacity: activeFrog.vibe.scanlineOpacity, transition: 'opacity 0.6s ease' }} />
       <div aria-hidden="true" style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 1, opacity: activeFrog.vibe.grainOpacity, transition: 'opacity 0.6s ease', backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`, backgroundRepeat: 'repeat', backgroundSize: '200px 200px' }} />
       <div aria-hidden="true" style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0, background: activeFrog.vibe.ambientGradient, transition: 'background 0.7s ease' }} />
@@ -904,6 +1011,29 @@ export default function FrogChat() {
             $FROGNAL
           </a>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {/* Wallet button — always visible when CUSTOM_FROG_CREATOR is on */}
+            {FEATURES.CUSTOM_FROG_CREATOR && (
+              <button
+                onClick={wallet.isConnected ? wallet.disconnect : wallet.openConnect}
+                title={wallet.isConnected
+                  ? `${wallet.formattedBalance} $FROGNAL · click to disconnect`
+                  : 'Connect wallet to forge frogs'}
+                style={{ ...s.iconButton,
+                  color: wallet.isConnected
+                    ? wallet.isEligible ? '#39ff14' : '#c8e6c8'
+                    : '#c8e6c8',
+                  borderColor: wallet.isConnected && wallet.isEligible
+                    ? 'rgba(57,255,20,0.5)' : 'rgba(255,255,255,0.25)',
+                  background: 'rgba(255,255,255,0.06)',
+                  fontSize: 13, gap: 5, display: 'flex', alignItems: 'center',
+                  padding: '0 10px', width: 'auto',
+                }}>
+                {wallet.isConnected
+                  ? `${wallet.address?.slice(0,6)}…${wallet.address?.slice(-4)}`
+                  : '⬡'}
+              </button>
+            )}
+
             <button onClick={() => exportConversation(displayMessages)} title="export" disabled={displayMessages.filter(m => m.role !== 'splash').length === 0} style={{ ...s.iconButton, color: 'var(--text-dim)', borderColor: 'rgba(255,255,255,0.07)', opacity: displayMessages.filter(m => m.role !== 'splash').length === 0 ? 0.3 : 1, cursor: displayMessages.filter(m => m.role !== 'splash').length === 0 ? 'not-allowed' : 'pointer' }}>↓</button>
             <button onClick={() => { const muted = ambient.toggle(); setIsAmbient(!muted); }} title={isAmbient ? 'stop pond sounds' : 'start pond sounds'} style={{ ...s.iconButton, color: isAmbient ? activeFrog.color : 'var(--text-muted)', borderColor: isAmbient ? activeFrog.borderColor : 'rgba(255,255,255,0.07)', boxShadow: isAmbient ? `0 0 10px ${activeFrog.glowColor.replace('0.45','0.3')}` : 'none', transition: 'all 0.3s' }}>🌿</button>
             <button onClick={() => { const nowMuted = sounds.toggle(); setIsMuted(nowMuted); }} title={isMuted ? 'unmute' : 'mute'} style={{ ...s.iconButton, color: isMuted ? 'var(--text-muted)' : activeFrog.color, borderColor: isMuted ? 'rgba(255,255,255,0.07)' : activeFrog.borderColor }}>{isMuted ? '🔇' : '🔊'}</button>
@@ -916,8 +1046,40 @@ export default function FrogChat() {
 
         {/* Frog selector */}
         <div style={s.frogSelector}>
+          
+          {/* Forge button */}
+          {FEATURES.CUSTOM_FROG_CREATOR && (
+            <button
+              title={
+               !wallet.isConnected ? 'Connect wallet to forge' :
+               !wallet.isEligible  ? `Need 50K $FROGNAL · you have ${wallet.formattedBalance}` :
+               'Open Frog Forge'
+             }
+             onClick={() => {
+               if (!wallet.isConnected) { wallet.openConnect(); return; }
+               if (wallet.isEligible)   setShowForge(true);
+             }}
+              disabled={isBlocked}
+              style={{ ...s.frogPill,
+                background: 'rgba(255,255,255,0.06)',
+                border: `1px solid ${wallet.isEligible ? 'rgba(57,255,20,0.5)' : 'rgba(255,255,255,0.25)'}`,
+                color:  wallet.isEligible ? '#39ff14' : '#c8e6c8',
+                opacity: isBlocked ? 0.3 : 1,
+                cursor: isBlocked ? 'not-allowed' : 'pointer',
+                letterSpacing: '0.04em',
+              }}>
+              <span style={{ fontSize: 14 }}>⚒</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14 }}>
+                {wallet.isConnected && !wallet.isEligible
+                 ? `${wallet.formattedBalance} / 50K`
+                 : 'forge'}
+              </span>
+            </button>
+          )}
+
           {displayFrogOrder.map((frogId) => {
-            const frog = FROGS[frogId];
+            const frog = allFrogs[frogId] ?? FROGS[frogId as keyof typeof FROGS];
+            if (!frog) return null;
             const isActive = frogId === activeFrogId;
             const isFlashing = frogId === flashFrogId;
             const mood = moodState[frogId];
@@ -929,6 +1091,18 @@ export default function FrogChat() {
                 style={{ ...s.frogPill, background: isActive ? frog.bgColor : 'rgba(255,255,255,0.03)', border: `1px solid ${isActive ? frog.borderColor : isFlashing ? frog.borderColor : 'rgba(255,255,255,0.07)'}`, color: isActive ? frog.color : 'var(--text-muted)', boxShadow: isFlashing ? `0 0 28px ${frog.glowColor}, 0 0 8px ${frog.glowColor}` : isActive ? `0 0 18px ${frog.glowColor.replace('0.45', '0.22')}` : 'none', transform: isActive ? 'translateY(-2px)' : isFlashing ? 'translateY(-3px) scale(1.04)' : 'none', cursor: isBlocked ? 'not-allowed' : 'pointer', opacity: isBlocked && !isActive ? 0.4 : 1, transition: 'all 0.2s ease', animation: isFlashing ? 'pill-flash 0.9s ease-out' : isNewlyUnlocked ? 'msg-in 0.5s ease-out' : 'none' }}>
                 <span style={{ fontSize: 16 }}>{frog.emoji}</span>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 15 }}>{frog.name}</span>
+                {String(frogId).startsWith('custom_') && (
+                  <span style={{
+                    fontFamily: 'var(--font-pixel)', fontSize: 7,
+                    padding: '2px 5px', borderRadius: 3,
+                    background: `${frog.color}22`,
+                    border: `1px solid ${frog.color}55`,
+                    color: frog.color, opacity: 0.8,
+                    letterSpacing: '0.04em',
+                  }}>
+                    custom
+                  </span>
+                )}
                 {moodEmoji && <span style={{ fontSize: 12, marginLeft: 2 }} title={mood}>{moodEmoji}</span>}
                 {!isActive && !isBlocked && <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: frog.color, opacity: 0.45, marginLeft: 4, flexShrink: 0, animation: `pulse-glow ${Math.max(0.5, 2.2 - streakCount * 0.18).toFixed(2)}s ease-in-out infinite` }} title="lurking..." />}
               </button>
