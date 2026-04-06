@@ -390,8 +390,6 @@ export default function FrogChat() {
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const spontaneousDebateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pondMemoryRef = useRef<PondMemory>(createPondMemory());
-  //const activeFrog = FROGS[activeFrogId];
-  
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -399,21 +397,12 @@ export default function FrogChat() {
   const [isDragging, setIsDragging] = useState(false);
   const [customFrog,  setCustomFrog]  = useState<FrogConfig | null>(null);
   const [showForge,   setShowForge]   = useState(false);
-  //const [creatorFrogs, setCreatorFrogs] = useState<FrogConfig[]>([]);
   const [creatorFrogs, setCreatorFrogs] = useState<FrogConfig[]>(() =>
     typeof window !== 'undefined' ? getSavedFrogs() : []
   );
 
 
   const wallet = useWallet();
-
-  // Merged frog registry — base frogs + any loaded custom frog
-  /*
-  const allFrogs: Record<string, FrogConfig> = {
-    ...FROGS,
-    ...(customFrog ? { [customFrog.id]: customFrog } : {}),
-  };
-  */
 
   const allFrogs: Record<string, FrogConfig> = {
     ...FROGS,
@@ -427,22 +416,6 @@ export default function FrogChat() {
 
 
   const unlockedFrogs: FrogId[] = sincerityUnlocked ? ['sincerity'] : [];
-
-  /*
-  const displayFrogOrder: FrogId[] = [
-    ...BASE_FROG_ORDER,
-    ...(sincerityUnlocked ? ['sincerity' as FrogId] : []),
-    ...(customFrog ? [customFrog.id as FrogId] : []),
-  ];
-  
-
-  const displayFrogOrder: FrogId[] = [
-    ...BASE_FROG_ORDER,
-    ...(sincerityUnlocked ? ['sincerity' as FrogId] : []),
-    ...(customFrog ? [customFrog.id as FrogId] : []),
-    ...creatorFrogs.map(f => f.id as FrogId),
-  ];
-  */
 
   const displayFrogOrder: FrogId[] = [
     ...BASE_FROG_ORDER,
@@ -643,7 +616,6 @@ export default function FrogChat() {
     streakCountRef.current = 0; setStreakCount(0);
     resetSilenceTimer();
     resetSpontaneousDebateTimer();
-    //setDisplayMessages((prev) => [...prev, { id: `splash-${newFrogId}-${Date.now()}`, role: 'splash', content: FROGS[newFrogId].splashLine, frogId: newFrogId }]);
 
     const switchedFrog = allFrogs[newFrogId] ?? FROGS[newFrogId as keyof typeof FROGS];
     setDisplayMessages((prev) => [...prev, { id: `splash-${newFrogId}-${Date.now()}`, role: 'splash', content: switchedFrog.splashLine, frogId: newFrogId }]);
@@ -906,9 +878,6 @@ export default function FrogChat() {
         await new Promise((r) => setTimeout(r, 600));
         setDisplayMessages((prev) => [...prev, { id: `rare-${activeFrogId}-${Date.now()}`, role: 'rare_event', content: rareEvent.message, frogId: activeFrogId }]);
       }
-
-      //await runInterruptions(activeFrogId, text, fullFrogResponse);
-      //await runAgreement(activeFrogId, fullFrogResponse);
 
       // Soft limit: reduce interruption chance by skipping if budget is tight
       if (!requestBudget.isExhausted) {
