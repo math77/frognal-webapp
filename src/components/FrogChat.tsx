@@ -337,6 +337,26 @@ function exportConversation(messages: DisplayMessage[]): void {
   URL.revokeObjectURL(url);
 }
 
+// ─── Persist frogs on localStorage ───────────────────────────────────────────────────────────────────
+
+const SAVED_FROGS_KEY = 'frognal_saved_frogs';
+
+function getSavedFrogs(): FrogConfig[] {
+  try {
+    const raw = localStorage.getItem(SAVED_FROGS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveFrogToStorage(frog: FrogConfig) {
+  try {
+    const existing = getSavedFrogs();
+    const alreadySaved = existing.some(f => f.id === frog.id);
+    if (alreadySaved) return;
+    localStorage.setItem(SAVED_FROGS_KEY, JSON.stringify([...existing, frog]));
+  } catch {}
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function FrogChat() {
@@ -379,7 +399,11 @@ export default function FrogChat() {
   const [isDragging, setIsDragging] = useState(false);
   const [customFrog,  setCustomFrog]  = useState<FrogConfig | null>(null);
   const [showForge,   setShowForge]   = useState(false);
-  const [creatorFrogs, setCreatorFrogs] = useState<FrogConfig[]>([]);
+  //const [creatorFrogs, setCreatorFrogs] = useState<FrogConfig[]>([]);
+  const [creatorFrogs, setCreatorFrogs] = useState<FrogConfig[]>(() =>
+    typeof window !== 'undefined' ? getSavedFrogs() : []
+  );
+
 
   const wallet = useWallet();
 
@@ -410,13 +434,23 @@ export default function FrogChat() {
     ...(sincerityUnlocked ? ['sincerity' as FrogId] : []),
     ...(customFrog ? [customFrog.id as FrogId] : []),
   ];
-  */
+  
 
   const displayFrogOrder: FrogId[] = [
     ...BASE_FROG_ORDER,
     ...(sincerityUnlocked ? ['sincerity' as FrogId] : []),
     ...(customFrog ? [customFrog.id as FrogId] : []),
     ...creatorFrogs.map(f => f.id as FrogId),
+  ];
+  */
+
+  const displayFrogOrder: FrogId[] = [
+    ...BASE_FROG_ORDER,
+    ...(sincerityUnlocked ? ['sincerity' as FrogId] : []),
+    ...Array.from(new Set([
+      ...(customFrog ? [customFrog.id as FrogId] : []),
+      ...creatorFrogs.map(f => f.id as FrogId),
+    ])),
   ];
 
 
@@ -438,6 +472,10 @@ export default function FrogChat() {
         if (data.frog) {
           const cfg = data.frog as FrogConfig;
           setCustomFrog(cfg);
+          saveFrogToStorage(cfg);
+          setCreatorFrogs(prev =>
+            prev.some(f => f.id === cfg.id) ? prev : [...prev, cfg]
+          );
           setActiveFrogId(cfg.id as FrogId);
           clearHistory();
           setDisplayMessages(prev => [...prev, {
@@ -605,8 +643,12 @@ export default function FrogChat() {
     streakCountRef.current = 0; setStreakCount(0);
     resetSilenceTimer();
     resetSpontaneousDebateTimer();
-    setDisplayMessages((prev) => [...prev, { id: `splash-${newFrogId}-${Date.now()}`, role: 'splash', content: FROGS[newFrogId].splashLine, frogId: newFrogId }]);
-  }, [activeFrogId, clearHistory, isBlocked, resetSilenceTimer, resetSpontaneousDebateTimer, triggerBurst]);
+    //setDisplayMessages((prev) => [...prev, { id: `splash-${newFrogId}-${Date.now()}`, role: 'splash', content: FROGS[newFrogId].splashLine, frogId: newFrogId }]);
+
+    const switchedFrog = allFrogs[newFrogId] ?? FROGS[newFrogId as keyof typeof FROGS];
+    setDisplayMessages((prev) => [...prev, { id: `splash-${newFrogId}-${Date.now()}`, role: 'splash', content: switchedFrog.splashLine, frogId: newFrogId }]);
+
+  }, [activeFrogId, clearHistory, isBlocked, resetSilenceTimer, resetSpontaneousDebateTimer, triggerBurst, allFrogs]);
 
   // ── Poke ──────────────────────────────────────────────────────────────────────
 
