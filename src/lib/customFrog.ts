@@ -91,7 +91,7 @@ export function extractDbId(frogId: string): string | null {
 }
 
 /** $FROGNAL token address on Base mainnet */
-export const FROGNAL_TOKEN_ADDRESS = '0xBCbcC5b3F80E075f10215726d1fb315675B8eD9C' as const;
+export const FROGNAL_TOKEN_ADDRESS = '0xE7e6C75C662798d1Dfaffa280c62C25ed7a93b07' as const;
 
 /** 50 000 tokens with 18 decimals */
 export const FROGNAL_THRESHOLD = BigInt(50_000) * 10n ** 18n;

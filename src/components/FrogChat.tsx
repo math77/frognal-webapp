@@ -357,6 +357,25 @@ function saveFrogToStorage(frog: FrogConfig) {
   } catch {}
 }
 
+// ─── Parse error messages ───────────────────────────────────────────────────────────────────
+
+function getPondErrorMessage(errorMsg: string): string {
+  const msg = errorMsg.toLowerCase();
+  if (msg.includes('429') || msg.includes('rate limit') || msg.includes('quota')) {
+    if (msg.includes('per minute') || msg.includes('rpm')) {
+      return '...the pond is overwhelmed. too many frogs talking at once. try again in a moment.';
+    }
+    if (msg.includes('per day') || msg.includes('rpd') || msg.includes('daily')) {
+      return '...the pond has gone quiet for today. daily frog limit reached. come back tomorrow.';
+    }
+    return '...the pond needs a moment. api limit reached. try again shortly.';
+  }
+  if (msg.includes('500') || msg.includes('server')) {
+    return '...something broke deep in the pond. the frogs are regrouping.';
+  }
+  return '...the frog glitched. the pond is broken.';
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function FrogChat() {
@@ -891,8 +910,15 @@ export default function FrogChat() {
       }
 
     } catch (err) {
-      console.error('[FrogChat] error:', err);
-      setDisplayMessages((prev) => prev.map((m) => m.id === frogMsgId ? { ...m, content: '...the frog glitched. the pond is broken.', isStreaming: false } : m));
+      //console.error('[FrogChat] error:', err);
+      //setDisplayMessages((prev) => prev.map((m) => m.id === frogMsgId ? { ...m, content: '...the frog glitched. the pond is broken.', isStreaming: false } : m));
+
+      console.error('[FrogChat]', err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const pondMsg = getPondErrorMessage(errMsg);
+      setDisplayMessages((prev) => prev.map((m) =>
+        m.id === frogMsgId ? { ...m, content: pondMsg, isStreaming: false } : m
+      ));
     }
   }, [inputValue, status, activeFrogId, activeFrog, generate, runInterruptions, runAgreement, resetSilenceTimer, runDebate, sincerityUnlocked, triggerSincerityUnlock]);
 
