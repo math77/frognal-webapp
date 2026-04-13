@@ -109,8 +109,9 @@ async function generate(frogId: FrogId, castText: string, username: string): Pro
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
   });
 
-  const text    = res.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
-  const full    = sig(frogId) + text;
+  //const text    = res.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
+  const text = res.text?.trim() ?? '';
+  const full = sig(frogId) + text;
   if (full.length <= MAX_CAST_CHARS) return full;
   const cut = full.slice(0, MAX_CAST_CHARS - 1);
   return cut.slice(0, cut.lastIndexOf(' ')).trim();
