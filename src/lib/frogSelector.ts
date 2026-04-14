@@ -51,8 +51,8 @@ const FALLBACK_WEIGHTS: Record<FrogId, number> = {
   doomer:      2,
   philosopher: 3,
   corporate:   3,
-  politician:  4,
-  aristocrat:  3,
+  politician:  3,
+  aristocrat:  4,
   sincerity: 1
 };
 
